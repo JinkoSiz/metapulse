@@ -64,6 +64,9 @@ async def test_first_run_of_day_uses_carousel_then_switches_to_browse(session) -
     assert len(selection.items) == 20
     assert all(item.slug.startswith("carousel-") for item in selection.items)
     assert client.browse_calls == []  # первый заход дня в browse не ходит
+    # Отчитываемся источником игр, а не тем, что осталось на следующий заход
+    assert selection.phase == "carousel"
+    assert selection.next_phase == "browse"
 
     state = await session.get(CrawlState, TODAY)
     # Карусель за день отдаётся один раз: повторный заход дал бы тот же список

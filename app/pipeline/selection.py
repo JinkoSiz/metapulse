@@ -37,7 +37,8 @@ class Selection:
     """Результат выборки: сами игры плюс состояние, в котором остался день."""
 
     items: list[FinderItem] = field(default_factory=list)
-    phase: str = PHASE_CAROUSEL
+    phase: str = PHASE_CAROUSEL  # откуда взяты игры этого захода
+    next_phase: str = PHASE_CAROUSEL  # с чего начнётся следующий заход сегодня
     next_offset: int = 0
     pages_scanned: int = 0
 
@@ -54,6 +55,7 @@ async def select_batch(
     обработки игры, иначе упавший прогон «съел» бы игры до следующего дня.
     """
     state = await _get_or_create_state(session, day)
+    source_phase = state.phase
 
     if state.phase == PHASE_CAROUSEL:
         selection = await _select_from_carousel(session, client, day, size)
@@ -65,7 +67,10 @@ async def select_batch(
         state.next_offset = selection.next_offset
 
     state.runs_count += 1
-    selection.phase = state.phase
+    # В отчёте важна фаза, ИЗ которой взяты игры, а не та, что осталась на следующий заход:
+    # иначе первый обход дня рапортует «browse», хотя игры пришли из карусели
+    selection.phase = source_phase
+    selection.next_phase = state.phase
     selection.next_offset = state.next_offset
     await session.flush()
 
@@ -74,6 +79,7 @@ async def select_batch(
         day=str(day),
         picked=len(selection.items),
         phase=selection.phase,
+        next_phase=selection.next_phase,
         next_offset=selection.next_offset,
         pages=selection.pages_scanned,
     )

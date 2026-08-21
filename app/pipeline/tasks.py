@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -55,6 +56,7 @@ def _empty_stats() -> dict[str, int]:
         "updated": 0,
         "reviews_fetched": 0,
         "summaries_written": 0,
+        "summaries_deferred": 0,
         "llm_calls": 0,
         "letsplays": 0,
         "errors": 0,
@@ -110,6 +112,7 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
     status = "ok"
     error_text: str | None = None
     processed_ids: list[int] = []
+    budget = _LlmBudget(settings.llm_budget_seconds)
 
     async with SessionLocal() as session:
         run = PipelineRun(trigger=trigger, status="running", started_at=started_at)
@@ -134,11 +137,13 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
                     stage="select",
                     message=(
                         f"Отобрано игр: {len(selection.items)} "
-                        f"(фаза {selection.phase}, offset {selection.next_offset})"
+                        f"(источник: {selection.phase}, "
+                        f"дальше {selection.next_phase} с offset {selection.next_offset})"
                     ),
                     payload={
                         "day": str(day),
                         "phase": selection.phase,
+                        "next_phase": selection.next_phase,
                         "next_offset": selection.next_offset,
                         "pages_scanned": selection.pages_scanned,
                     },
@@ -159,7 +164,7 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
                     )
                     try:
                         game_id = await _process_game(
-                            session, client, bus, run_id, day, item, stats
+                            session, client, bus, run_id, day, item, stats, budget
                         )
                         processed_ids.append(game_id)
                     except Exception as exc:
@@ -190,6 +195,7 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
             )
             await session.commit()
 
+        stats["summaries_deferred"] = budget.skipped
         if status != "error":
             status = "partial" if stats["errors"] else "ok"
 
@@ -224,6 +230,29 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
     return {"run_id": run_id, "status": status, **stats}
 
 
+class _LlmBudget:
+    """Потолок времени, которое обход тратит на резюме.
+
+    Сбор данных быстрый, а генерация на локальной модели — минуты на игру. Без потолка
+    обход из двадцати игр вылезал бы за часовой слот, и следующий заход упирался бы в лок.
+    Исчерпав бюджет, прогон дособирает игры без резюме: они видны на витрине сразу, а
+    текст догонит на следующих заходах — `input_hash` не даст пересчитать уже готовое.
+    """
+
+    def __init__(self, seconds: int) -> None:
+        self._deadline = time.monotonic() + seconds if seconds > 0 else None
+        self.skipped = 0
+
+    @property
+    def exhausted(self) -> bool:
+        if self._deadline is None:
+            return False
+        return time.monotonic() >= self._deadline
+
+    def note_skip(self) -> None:
+        self.skipped += 1
+
+
 async def _process_game(
     session: AsyncSession,
     client: MetacriticClient,
@@ -232,6 +261,7 @@ async def _process_game(
     day: dt.date,
     item: Any,
     stats: dict[str, int],
+    budget: _LlmBudget,
 ) -> int:
     """Одна игра: деталка -> платформы -> отзывы -> резюме -> эмбеддинг -> daily_seen."""
     detail = await client.get_game(item.slug)
@@ -260,9 +290,13 @@ async def _process_game(
     new_reviews = await upsert_reviews(session, game, list(critic) + list(user))
     await session.commit()
 
-    for kind in ("critic", "user"):
-        if await _safe_summary(session, game, kind, stats):
-            stats["summaries_written"] += 1
+    if budget.exhausted:
+        budget.note_skip()
+        log.info("crawl.summary_deferred", slug=game.slug)
+    else:
+        for kind in ("critic", "user"):
+            if await _safe_summary(session, game, kind, stats):
+                stats["summaries_written"] += 1
 
     try:
         await ensure_embedding(session, game)

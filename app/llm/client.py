@@ -347,7 +347,10 @@ class LlmClient:
             "prompt": user,
             "stream": False,
             "format": schema,
-            "options": {"num_predict": max_tokens or settings.llm_max_tokens},
+            "options": {
+                "num_predict": max_tokens or settings.llm_max_tokens,
+                "num_thread": settings.ollama_num_threads,
+            },
         }
 
         started = time.perf_counter()
@@ -508,7 +511,11 @@ class LlmClient:
         """Локальные эмбеддинги. Чтение текста несопоставимо дешевле генерации,
         поэтому здесь слабый процессор сервера не помеха."""
         model = settings.ollama_embedding_model
-        request: dict[str, Any] = {"model": model, "input": texts}
+        request: dict[str, Any] = {
+            "model": model,
+            "input": texts,
+            "options": {"num_thread": settings.ollama_num_threads},
+        }
 
         started = time.perf_counter()
         try:
