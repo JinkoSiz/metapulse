@@ -1,9 +1,12 @@
 # Переписка с нейросетью: сессии разработки
 
 Сырые JSONL-транскрипты сессий Claude Code, в которых разрабатывался сервис.
-Секреты (ключи API, пароли, токены) вычищены автоматически при выгрузке.
 
-Выгружено: 2026-08-21 08:04 UTC
+При выгрузке автоматически вычищены: ключи API, пароли и токены; адреса, домены
+и имена машин, по которым можно опознать инфраструктуру; содержимое личных
+заметок, которые попадали в сессию и к сервису отношения не имеют.
+
+Выгружено: 2026-08-21 18:14 UTC
 
 | Файл | Строк | Начало | Источник |
 |---|---:|---|---|
@@ -24,4 +27,8 @@
 | `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8ee0f617-3b6__agent-a402e5ab667d7a13c.jsonl` | 79 | 2026-08-20T18:12:50.997Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8ee0f617-3b6/agent-a402e5ab667d7a13c.jsonl` |
 | `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8ee0f617-3b6__journal.jsonl` | 6 | — | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8ee0f617-3b6/journal.jsonl` |
 | `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8ee0f617-3b6__agent-a1f1186bbf3d2f860.jsonl` | 4 | 2026-08-20T18:19:25.670Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8ee0f617-3b6/agent-a1f1186bbf3d2f860.jsonl` |
-| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0.jsonl` | 961 | 2026-08-20T17:26:24.108Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0.jsonl` |
+| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8f62454d-fa8__agent-aed7af6547ce063b9.jsonl` | 149 | 2026-08-21T16:17:05.591Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8f62454d-fa8/agent-aed7af6547ce063b9.jsonl` |
+| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8f62454d-fa8__agent-a4bee94a2c0e5cad1.jsonl` | 221 | 2026-08-21T16:17:14.043Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8f62454d-fa8/agent-a4bee94a2c0e5cad1.jsonl` |
+| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8f62454d-fa8__agent-a58d3fb6e0dd29c80.jsonl` | 263 | 2026-08-21T16:17:12.122Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8f62454d-fa8/agent-a58d3fb6e0dd29c80.jsonl` |
+| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0__subagents__workflows__wf_8f62454d-fa8__journal.jsonl` | 6 | — | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0/subagents/workflows/wf_8f62454d-fa8/journal.jsonl` |
+| `c--Users-JinkoSiz-Downloads-SomeTest__6f65a0ee-7d67-4416-9aac-30804fc3e6d0.jsonl` | 2161 | 2026-08-20T17:26:24.108Z | `c--Users-JinkoSiz-Downloads-SomeTest/6f65a0ee-7d67-4416-9aac-30804fc3e6d0.jsonl` |

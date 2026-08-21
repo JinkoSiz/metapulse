@@ -48,6 +48,10 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       YOUTUBE_PROXY: http://singbox:1081
+    volumes:
+      # Служебные скрипты (наполнение витрины, выгрузка логов) в образ не попадают —
+      # они не нужны сервису в работе. На сервере их удобно иметь под рукой.
+      - ./scripts:/app/scripts:ro
     networks:
       default: {}
       stoat_default: {}
