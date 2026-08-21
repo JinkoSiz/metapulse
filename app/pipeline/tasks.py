@@ -59,6 +59,7 @@ def _empty_stats() -> dict[str, int]:
         "summaries_deferred": 0,
         "llm_calls": 0,
         "letsplays": 0,
+        "letsplays_deferred": 0,
         "errors": 0,
     }
 
@@ -374,7 +375,16 @@ async def _run_letsplays(
     if not settings.youtube_enabled or not game_ids:
         return
 
+    # Разбор летсплея — это транскрипт плюс генерация, то есть минуты на игру. Свой
+    # потолок нужен отдельно от резюме: иначе на двадцати играх прогон упирался в
+    # job_timeout и умирал, не дойдя до конца.
+    budget = _LlmBudget(settings.letsplay_budget_seconds)
+
     for index, game_id in enumerate(game_ids, start=1):
+        if budget.exhausted:
+            stats["letsplays_deferred"] = len(game_ids) - index + 1
+            log.info("crawl.letsplays_deferred", remaining=stats["letsplays_deferred"])
+            break
         await bus.heartbeat(
             worker,
             {
