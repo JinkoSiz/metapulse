@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Каталог игр — MetaPulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Каталог игр</h1>
+<p class="muted">
+  Сервис ежечасно забирает новые игры с Metacritic и делает по их отзывам два резюме —
+  отдельно по критикам и отдельно по игрокам.
+</p>
+
+<form class="filters" method="get" action="/"
+      hx-get="/" hx-target="#game-grid" hx-select="#game-grid" hx-swap="outerHTML"
+      hx-push-url="true" hx-trigger="submit, change from:select, search delay:400ms from:input[name='q']">
+  <input class="input" type="search" name="q" value="{{ q }}" placeholder="Поиск по названию" aria-label="Поиск по названию">
+
+  <select class="select" name="platform" aria-label="Платформа">
+    <option value="">Все платформы</option>
+    {% for facet in facets %}
+      <option value="{{ facet.slug }}" {{ 'selected' if facet.slug == platform else '' }}>
+        {{ facet.name }} ({{ facet.games }})
+      </option>
+    {% endfor %}
+  </select>
+
+  <select class="select" name="sort" aria-label="Сортировка">
+    {% for key, label in SORTS.items() %}
+      <option value="{{ key }}" {{ 'selected' if key == sort else '' }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+
+  <button class="btn" type="submit">Показать</button>
+  {% if has_filters %}<a class="btn btn-ghost" href="/">Сбросить</a>{% endif %}
+</form>
+
+{% include "_game_grid.html" %}
+{% endblock %}

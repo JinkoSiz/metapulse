@@ -1,0 +1,68 @@
+<div id="game-grid">
+  <p class="result-count">
+    {% if total %}Найдено игр: <b>{{ total }}</b>{% else %}Ничего не найдено{% endif %}
+  </p>
+
+  {% if games %}
+  <ul class="grid">
+    {% for game in games %}
+    <li class="card">
+      <a class="card-link" href="/game/{{ game.slug }}">
+        <div class="cover">
+          {% if game.cover_url %}
+            <img src="{{ game.cover_url }}" alt="{{ game.title }}" loading="lazy">
+          {% else %}
+            <div class="cover-stub">нет обложки</div>
+          {% endif %}
+          <span class="badge {{ game.lead_metascore | score_class }}">{{ game.lead_metascore | metascore }}</span>
+        </div>
+        <div class="card-body">
+          <h2 class="card-title">{{ game.title }}</h2>
+          <div class="card-meta">
+            <span>{{ game.release_date | date_ru }}</span>
+            {% if game.lead_userscore is not none %}
+              <span class="dot"></span>
+              <span class="user-score {{ game.lead_userscore | score_class(10) }}">
+                {{ game.lead_userscore | userscore }}
+              </span>
+            {% endif %}
+          </div>
+          {% if game.developer %}<div class="card-dev">{{ game.developer }}</div>{% endif %}
+          {% set platform_list = game.platforms | list %}
+          {% if platform_list %}
+          <div class="chips">
+            {% for platform in platform_list[:3] %}
+              <span class="chip">{{ platform.platform_name }}</span>
+            {% endfor %}
+            {% if platform_list | length > 3 %}<span class="chip chip-more">+{{ platform_list | length - 3 }}</span>{% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">
+    {% if has_filters %}
+      <p>По этому запросу ничего нет. Попробуйте изменить фильтры.</p>
+    {% else %}
+      <p>База пока пуста.</p>
+      <p class="muted">Игры появятся после первого обхода — он запускается ежечасно
+        либо вручную кнопкой на странице <a href="/monitor">мониторинга</a>.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if total_pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}
+      <a class="btn btn-ghost" href="/?{{ base_query }}{% if base_query %}&{% endif %}page={{ page - 1 }}">← Назад</a>
+    {% endif %}
+    <span class="pager-info">Страница {{ page }} из {{ total_pages }}</span>
+    {% if page < total_pages %}
+      <a class="btn btn-ghost" href="/?{{ base_query }}{% if base_query %}&{% endif %}page={{ page + 1 }}">Вперёд →</a>
+    {% endif %}
+  </nav>
+  {% endif %}
+</div>

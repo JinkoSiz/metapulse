@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+.env
+logs/
+docs/ai-sessions/
+docs/llm-logs/
+tests/
+scripts/
+*.egg-info/

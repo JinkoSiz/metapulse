@@ -1,0 +1,11 @@
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# SSE-поток мониторинга: буферизация должна быть выключена
+	@sse path /api/events
+	reverse_proxy @sse web:8000 {
+		flush_interval -1
+	}
+
+	reverse_proxy web:8000
+}

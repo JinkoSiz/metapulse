@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MetaPulse{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎮</text></svg>">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/">Meta<span>Pulse</span></a>
+      <nav class="nav">
+        <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Каталог</a>
+        <a href="/monitor" class="{{ 'active' if request.url.path == '/monitor' else '' }}">Мониторинг</a>
+        <a href="/llm-logs" class="{{ 'active' if request.url.path.startswith('/llm-logs') else '' }}">Логи LLM</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      Данные: <a href="https://www.metacritic.com/game/" rel="noreferrer">Metacritic</a>.
+      Резюме отзывов сгенерированы LLM и могут содержать неточности.
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

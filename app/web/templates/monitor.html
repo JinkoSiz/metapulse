@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Мониторинг — MetaPulse{% endblock %}
+
+{% block content %}
+<div class="monitor-head">
+  <div>
+    <h1 class="page-title">Мониторинг обработки</h1>
+    <p class="muted">Обновляется в реальном времени через SSE. <span id="sse-state" class="chip">подключение…</span></p>
+  </div>
+  <div class="run-box">
+    <label class="sr-only" for="admin-token">Админ-токен</label>
+    <input class="input" id="admin-token" type="password" placeholder="X-Admin-Token" autocomplete="off">
+    <button class="btn btn-primary" id="run-btn" type="button">Запустить обработку</button>
+    <p id="run-result" class="small muted"></p>
+  </div>
+</div>
+
+<section class="tiles">
+  <div class="tile"><span class="tile-label">Игр в базе</span><b id="m-games" class="tile-value">{{ stats.games_total }}</b></div>
+  <div class="tile"><span class="tile-label">Добавлено сегодня</span><b id="m-today" class="tile-value">{{ stats.games_today }}</b></div>
+  <div class="tile"><span class="tile-label">Отзывов собрано</span><b id="m-reviews" class="tile-value">{{ stats.reviews_total }}</b></div>
+  <div class="tile"><span class="tile-label">Резюме LLM</span><b id="m-summaries" class="tile-value">{{ stats.summaries_total }}</b></div>
+  <div class="tile"><span class="tile-label">Летсплеев</span><b id="m-letsplays" class="tile-value">{{ stats.letsplays_with_conclusion }}/{{ stats.letsplays_total }}</b></div>
+  <div class="tile"><span class="tile-label">Вызовов LLM сегодня</span><b id="m-llm" class="tile-value">{{ stats.llm_calls_today }}</b></div>
+  <div class="tile"><span class="tile-label">Токенов сегодня</span><b id="m-tokens" class="tile-value">{{ stats.llm_tokens_today }}</b></div>
+  <div class="tile"><span class="tile-label">Ошибок LLM сегодня</span><b id="m-llm-errors" class="tile-value">{{ stats.llm_errors_today }}</b></div>
+</section>
+
+<div class="monitor-cols">
+  <section>
+    <h3>Воркеры</h3>
+    <div id="workers" class="workers">
+      {% if stats.workers %}
+        {% for worker in stats.workers %}
+          <div class="worker">
+            <span class="dot live"></span>
+            <b>{{ worker.worker }}</b>
+            <span class="muted">{{ worker.state.stage or '—' }}</span>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="muted">Живых воркеров нет. Проверьте, что контейнер <code>worker</code> запущен.</p>
+      {% endif %}
+    </div>
+
+    <h3>История прогонов</h3>
+    <div class="tablewrap">
+      <table class="table" id="runs">
+        <thead><tr><th>#</th><th>Запуск</th><th>Статус</th><th>Начало</th><th class="num">Игр</th><th class="num">Ошибок</th></tr></thead>
+        <tbody>
+          {% for run in stats.runs %}
+          <tr>
+            <td>{{ run.id }}</td>
+            <td>{{ run.trigger }}</td>
+            <td><span class="chip status-{{ run.status }}">{{ run.status }}</span></td>
+            <td class="small">{{ run.started_at }}</td>
+            <td class="num">{{ (run.stats or {}).get('selected', 0) }}</td>
+            <td class="num">{{ (run.stats or {}).get('errors', 0) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="muted">Прогонов ещё не было</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h3>Лента событий</h3>
+    <ul id="events" class="events">
+      {% for event in stats.events %}
+        <li class="level-{{ event.level }}">
+          <span class="ev-stage">{{ event.stage or '—' }}</span>
+          <span class="ev-msg">{{ event.message }}</span>
+        </li>
+      {% else %}
+        <li class="muted">Событий пока нет</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const byId = (id) => document.getElementById(id);
+  const setText = (id, value) => { const el = byId(id); if (el) el.textContent = value; };
+
+  function renderStats(s) {
+    setText('m-games', s.games_total);
+    setText('m-today', s.games_today);
+    setText('m-reviews', s.reviews_total);
+    setText('m-summaries', s.summaries_total);
+    setText('m-letsplays', s.letsplays_with_conclusion + '/' + s.letsplays_total);
+    setText('m-llm', s.llm_calls_today);
+    setText('m-tokens', s.llm_tokens_today);
+    setText('m-llm-errors', s.llm_errors_today);
+
+    const box = byId('workers');
+    if (box) {
+      if (!s.workers || !s.workers.length) {
+        box.innerHTML = '<p class="muted">Живых воркеров нет. Проверьте, что контейнер <code>worker</code> запущен.</p>';
+      } else {
+        box.innerHTML = s.workers.map((w) => {
+          const st = w.state || {};
+          const progress = (st.processed !== undefined && st.total)
+            ? ' · ' + st.processed + '/' + st.total : '';
+          const current = st.current ? ' · ' + st.current : '';
+          return '<div class="worker"><span class="dot live"></span><b>' + w.worker + '</b>' +
+                 '<span class="muted">' + (st.stage || '—') + progress + current + '</span></div>';
+        }).join('');
+      }
+    }
+  }
+
+  function pushEvent(payload) {
+    const list = byId('events');
+    if (!list) return;
+    const li = document.createElement('li');
+    li.className = 'level-' + (payload.level || 'info') + ' fresh';
+    const stage = document.createElement('span');
+    stage.className = 'ev-stage';
+    stage.textContent = payload.stage || '—';
+    const msg = document.createElement('span');
+    msg.className = 'ev-msg';
+    msg.textContent = payload.message || '';
+    li.append(stage, msg);
+    list.prepend(li);
+    while (list.children.length > 40) list.removeChild(list.lastChild);
+  }
+
+  const state = byId('sse-state');
+  const source = new EventSource('/api/events');
+  source.addEventListener('open', () => { if (state) { state.textContent = 'онлайн'; state.className = 'chip status-ok'; } });
+  source.addEventListener('error', () => { if (state) { state.textContent = 'переподключение…'; state.className = 'chip status-partial'; } });
+  source.addEventListener('stats', (e) => { try { renderStats(JSON.parse(e.data)); } catch (_) {} });
+  source.addEventListener('task', (e) => { try { pushEvent(JSON.parse(e.data)); } catch (_) {} });
+
+  const TOKEN_KEY = 'metapulse-admin-token';
+  const tokenInput = byId('admin-token');
+  if (tokenInput) tokenInput.value = localStorage.getItem(TOKEN_KEY) || '';
+
+  const btn = byId('run-btn');
+  if (btn) btn.addEventListener('click', async () => {
+    const out = byId('run-result');
+    const token = (tokenInput && tokenInput.value) || '';
+    localStorage.setItem(TOKEN_KEY, token);
+    btn.disabled = true;
+    out.textContent = 'Ставим задачу в очередь…';
+    try {
+      const res = await fetch('/api/admin/run', { method: 'POST', headers: { 'X-Admin-Token': token } });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        out.textContent = body.status === 'duplicate'
+          ? 'Такая задача уже в очереди.'
+          : 'Задача поставлена: ' + (body.job_id || 'ok');
+      } else if (res.status === 401) {
+        out.textContent = 'Неверный токен. Значение берётся из ADMIN_TOKEN в .env.';
+      } else {
+        out.textContent = 'Не удалось запустить: ' + (body.detail || res.status);
+      }
+    } catch (err) {
+      out.textContent = 'Не удалось запустить: ' + err;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

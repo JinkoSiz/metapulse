@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}{{ game.title }} — MetaPulse{% endblock %}
+
+{% macro summary_block(summary, title, subtitle) %}
+<section class="summary">
+  <h3>{{ title }}</h3>
+  {% if summary %}
+    {% if summary.tl_dr %}<p class="tldr">{{ summary.tl_dr }}</p>{% endif %}
+    <div class="likes">
+      <div class="likes-col">
+        <h4 class="pos">Что нравится</h4>
+        {% if summary.likes %}
+          <ul>{% for item in summary.likes %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% else %}<p class="muted">—</p>{% endif %}
+      </div>
+      <div class="likes-col">
+        <h4 class="neg">Что не нравится</h4>
+        {% if summary.dislikes %}
+          <ul>{% for item in summary.dislikes %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% else %}<p class="muted">—</p>{% endif %}
+      </div>
+    </div>
+    <p class="summary-foot muted">
+      По {{ summary.source_review_count or 0 }} отзывам · модель {{ summary.model or '—' }}
+      · обновлено {{ summary.updated_at | date_ru }}
+    </p>
+  {% else %}
+    <p class="muted">{{ subtitle }}</p>
+  {% endif %}
+</section>
+{% endmacro %}
+
+{% block content %}
+<p class="breadcrumb"><a href="/">← К каталогу</a></p>
+
+<article class="game">
+  <header class="game-head">
+    <div class="game-cover">
+      {% if game.cover_url %}
+        <img src="{{ game.cover_url }}" alt="{{ game.title }}">
+      {% else %}
+        <div class="cover-stub">нет обложки</div>
+      {% endif %}
+    </div>
+
+    <div class="game-info">
+      <h1 class="game-title">{{ game.title }}</h1>
+      <dl class="facts">
+        {% if game.developer %}<dt>Разработчик</dt><dd>{{ game.developer }}</dd>{% endif %}
+        {% if game.publisher %}<dt>Издатель</dt><dd>{{ game.publisher }}</dd>{% endif %}
+        <dt>Дата выхода</dt><dd>{{ game.release_date | date_ru }}</dd>
+        {% if game.esrb_rating %}<dt>Рейтинг ESRB</dt><dd>{{ game.esrb_rating }}</dd>{% endif %}
+        {% set genre_list = game.genres | genres %}
+        {% if genre_list %}<dt>Жанры</dt><dd>{{ genre_list | join(', ') }}</dd>{% endif %}
+      </dl>
+
+      <table class="table scores">
+        <thead>
+          <tr><th>Платформа</th><th class="num">Metascore</th><th class="num">Userscore</th><th class="num">Отзывов</th></tr>
+        </thead>
+        <tbody>
+          {% for platform in platforms %}
+          <tr>
+            <td>
+              {{ platform.platform_name }}
+              {% if platform.is_lead %}<span class="chip chip-lead">основная</span>{% endif %}
+            </td>
+            <td class="num"><span class="badge sm {{ platform.metascore | score_class }}">{{ platform.metascore | metascore }}</span></td>
+            <td class="num"><span class="badge sm {{ platform.userscore | score_class(10) }}">{{ platform.userscore | userscore }}</span></td>
+            <td class="num muted">
+              {{ platform.metascore_review_count | int_ru }} / {{ platform.userscore_review_count | int_ru }}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">Платформы ещё не загружены</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">В колонке «Отзывов» — критики / игроки.</p>
+    </div>
+  </header>
+
+  {% if game.description %}
+  <section class="description">
+    <h3>Описание</h3>
+    <p>{{ game.description }}</p>
+  </section>
+  {% endif %}
+
+  {% if game.trailer_embed_url %}
+  <section class="trailer">
+    <h3>{{ game.trailer_title or 'Трейлер' }}</h3>
+    <div class="video">
+      <iframe src="{{ game.trailer_embed_url }}" title="{{ game.trailer_title or 'Трейлер' }}"
+              allowfullscreen loading="lazy"></iframe>
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="summaries">
+    {{ summary_block(critic_summary, 'Резюме отзывов критиков', 'Резюме появится после обработки отзывов LLM.') }}
+    {{ summary_block(user_summary, 'Резюме отзывов игроков', 'Резюме появится после обработки отзывов LLM.') }}
+  </div>
+
+  {% if letsplay %}
+  <section class="letsplay">
+    <h3>Что говорит блогер в летсплее</h3>
+    {% if letsplay.conclusion %}<p>{{ letsplay.conclusion }}</p>{% endif %}
+    <p class="muted small">
+      <a href="{{ letsplay.video_url }}" rel="noreferrer" target="_blank">{{ letsplay.video_title or letsplay.video_url }}</a>
+      {% if letsplay.channel %} · {{ letsplay.channel }}{% endif %}
+      {% if letsplay.view_count %} · {{ letsplay.view_count | int_ru }} просмотров{% endif %}
+      · заключение по транскрипту ({{ letsplay.transcript_source }})
+    </p>
+  </section>
+  {% endif %}
+
+  {% if similar %}
+  <section class="similar">
+    <h3>Похожие игры</h3>
+    <ul class="similar-list">
+      {% for item in similar %}
+      <li>
+        <a href="/game/{{ item.slug }}">
+          {% if item.cover_url %}<img src="{{ item.cover_url }}" alt="{{ item.title }}" loading="lazy">{% endif %}
+          <span class="similar-title">{{ item.title }}</span>
+          <span class="badge sm {{ item.lead_metascore | score_class }}">{{ item.lead_metascore | metascore }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</article>
+{% endblock %}
