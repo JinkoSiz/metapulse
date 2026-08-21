@@ -12,3 +12,4 @@ build/
 # runtime-логи LLM пишутся сюда; для сдачи выгружаются в docs/llm-logs/
 logs/llm/*.jsonl
 .run/
+.admin-token

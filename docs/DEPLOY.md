@@ -24,6 +24,12 @@ docker compose -f docker-compose.yml -f docker-compose.server.yml up -d --build
 | Сеть с Ollama | `interviewvault_default` | резюме считает локальная модель |
 | `OLLAMA_URL`, `YOUTUBE_PROXY` | окружение web и worker | адреса внутри этих сетей |
 
+**Про имена сервисов.** Все они начинаются с `metapulse-` не для красоты: Compose заводит
+DNS-алиас по имени сервиса в каждой сети контейнера. В общей сети сервера имена вроде `web`
+и `redis` уже заняты чужими контейнерами, и обращение к короткому имени приводит куда попало —
+воркер, подключённый к сети соседа, получал вместо своего Redis чужой. Уникальный префикс
+снимает и перехват чужих имён, и получение чужого сервиса вместо своего.
+
 Дальше в reverse proxy заводится хост на `<алиас>:8000` с сертификатом. Для страницы
 мониторинга нужен неблокирующий проброс SSE — в nginx это `proxy_buffering off;` и
 увеличенный `proxy_read_timeout`.
@@ -60,7 +66,7 @@ nano .env     # ключи API, ADMIN_TOKEN, SITE_ADDRESS=metapulse.example.com
 
 # 3. запуск
 docker compose up -d --build
-docker compose logs -f worker
+docker compose logs -f metapulse-worker
 ```
 
 `SITE_ADDRESS` — домен, на который указывает A-запись. Caddy получит сертификат Let's Encrypt
@@ -93,5 +99,5 @@ docker compose logs -f worker
 python scripts/export_ai_sessions.py
 
 # runtime-логи LLM с сервера
-docker compose cp worker:/app/logs/llm ./docs/llm-logs
+docker compose cp metapulse-worker:/app/logs/llm ./docs/llm-logs
 ```

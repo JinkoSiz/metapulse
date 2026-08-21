@@ -1,7 +1,13 @@
 name: metapulse
 
+# Имена сервисов намеренно с префиксом. Compose заводит DNS-алиас по имени сервиса в
+# КАЖДОЙ его сети, поэтому «redis» и «web» на сервере, где стек делит сеть с соседями,
+# либо перехватывают чужие имена, либо получают чужой контейнер вместо своего.
+# Уникальный префикс снимает оба риска разом.
+
 services:
-  postgres:
+  metapulse-postgres:
+    container_name: metapulse-postgres
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: metapulse
@@ -18,7 +24,8 @@ services:
       retries: 10
     restart: unless-stopped
 
-  redis:
+  metapulse-redis:
+    container_name: metapulse-redis
     image: redis:7-alpine
     command: redis-server --save 60 1 --loglevel warning
     volumes:
@@ -33,25 +40,31 @@ services:
       retries: 10
     restart: unless-stopped
 
-  web:
+  metapulse-web:
+    container_name: metapulse-web
     build: .
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://metapulse:${POSTGRES_PASSWORD:-metapulse}@postgres:5432/metapulse
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://metapulse:${POSTGRES_PASSWORD:-metapulse}@metapulse-postgres:5432/metapulse
+      REDIS_URL: redis://metapulse-redis:6379/0
+      # Путь задаётся явно: образ содержит и /app, и установленную копию пакета,
+      # а вычисление каталога от __file__ даёт разный ответ у uvicorn и у arq —
+      # логи разъезжались мимо тома
+      LLM_LOG_DIR: /app/logs/llm
     volumes:
       - llmlogs:/app/logs/llm
     depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
+      metapulse-postgres: {condition: service_healthy}
+      metapulse-redis: {condition: service_healthy}
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
 
-  worker:
+  metapulse-worker:
+    container_name: metapulse-worker
     build: .
     command: arq app.pipeline.worker.WorkerSettings
     # Воркер не слушает HTTP, поэтому healthcheck из образа тут не годится:
@@ -64,14 +77,15 @@ services:
       start_period: 60s
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://metapulse:${POSTGRES_PASSWORD:-metapulse}@postgres:5432/metapulse
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://metapulse:${POSTGRES_PASSWORD:-metapulse}@metapulse-postgres:5432/metapulse
+      REDIS_URL: redis://metapulse-redis:6379/0
+      LLM_LOG_DIR: /app/logs/llm
     volumes:
       - llmlogs:/app/logs/llm
     depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      web: {condition: service_started}
+      metapulse-postgres: {condition: service_healthy}
+      metapulse-redis: {condition: service_healthy}
+      metapulse-web: {condition: service_started}
     restart: unless-stopped
 
   caddy:
@@ -86,7 +100,7 @@ services:
       - caddydata:/data
       - caddyconfig:/config
     depends_on:
-      - web
+      - metapulse-web
     restart: unless-stopped
 
 volumes:

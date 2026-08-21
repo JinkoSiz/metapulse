@@ -152,7 +152,7 @@ docker compose up -d --build
 ### Локально (без Docker, только приложение)
 
 ```bash
-docker compose up -d postgres redis     # инфраструктура
+docker compose up -d metapulse-postgres metapulse-redis   # инфраструктура
 uv venv --python 3.12 && uv pip install -e ".[dev]"
 .venv/bin/alembic upgrade head
 .venv/bin/uvicorn app.web.main:app --reload      # веб

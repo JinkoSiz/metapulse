@@ -1,4 +1,4 @@
-# Оверлей для развёртывания на собственном сервере.
+# Оверлей для развёртывания на собственном сервере рядом с другими стеками.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.server.yml up -d --build
 #
@@ -6,7 +6,11 @@
 #   * HTTPS и домен обслуживает существующий Nginx Proxy Manager, а не свой Caddy;
 #   * резюме считает локальная Ollama из соседнего стека (сеть interviewvault_default);
 #   * запросы к YouTube идут через singbox: домен из России напрямую недоступен;
-#   * наружу ничего не публикуется — NPM ходит к web по имени внутри сети stoat_default.
+#   * наружу ничего не публикуется — прокси ходит к web по имени внутри общей сети;
+#   * заданы лимиты ресурсов: сервер делится с чужими сервисами и Minecraft.
+#
+# Внимание: базовый файл в одиночку здесь запускать нельзя — он публикует 80/443 и 8000,
+# которые уже заняты прокси и панелью Crafty. Всегда с этим оверлеем.
 
 services:
   caddy:
@@ -15,13 +19,19 @@ services:
 
   # На сервере 5432 и 6380 заняты соседними стеками, а публиковать их незачем:
   # web и worker ходят к базе и очереди внутри compose-сети по именам сервисов.
-  postgres:
+  metapulse-postgres:
     ports: !override []
+    deploy:
+      resources:
+        limits: {cpus: "1.5", memory: 1g}
 
-  redis:
+  metapulse-redis:
     ports: !override []
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256m}
 
-  web:
+  metapulse-web:
     ports: !override []
     environment:
       OLLAMA_URL: http://ollama:11434
@@ -30,8 +40,11 @@ services:
       default: {}
       stoat_default:
         aliases: [metapulse]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 768m}
 
-  worker:
+  metapulse-worker:
     environment:
       OLLAMA_URL: http://ollama:11434
       YOUTUBE_PROXY: http://singbox:1081
@@ -39,6 +52,11 @@ services:
       default: {}
       stoat_default: {}
       interviewvault_default: {}
+    deploy:
+      resources:
+        # Скрапинг и разбор транскриптов упираются в сеть, а не в процессор:
+        # тяжёлые вычисления уходят в Ollama, которой отведены свои потоки
+        limits: {cpus: "2.0", memory: 1g}
 
 networks:
   stoat_default:
