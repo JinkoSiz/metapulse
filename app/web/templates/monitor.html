@@ -52,7 +52,7 @@
           <tr>
             <td>{{ run.id }}</td>
             <td>{{ run.trigger }}</td>
-            <td><span class="chip status-{{ run.status }}">{{ run.status }}</span></td>
+            <td><span class="chip status-{{ run.status }}" title="{{ run.error or '' }}">{{ run.status }}</span></td>
             <td class="small">{{ run.started_at }}</td>
             <td class="num">{{ (run.stats or {}).get('selected', 0) }}</td>
             <td class="num">{{ (run.stats or {}).get('errors', 0) }}</td>

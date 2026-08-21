@@ -145,6 +145,7 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
 .status-ok { background: var(--good-bg); color: var(--good); }
 .status-partial { background: var(--mid-bg); color: var(--mid); }
 .status-error, .status-failed { background: var(--bad-bg); color: var(--bad); }
+.status-interrupted { background: var(--mid-bg); color: var(--mid); }
 .status-running { background: var(--surface-2); color: var(--muted); }
 
 .badge {

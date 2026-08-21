@@ -383,6 +383,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["event_bus"] = bus
     await bus.heartbeat(ctx["worker_name"], {"stage": "starting"})
 
+    await _close_orphan_runs()
+
     if not settings.catch_up_on_start:
         return
 
@@ -404,6 +406,29 @@ async def startup(ctx: dict[str, Any]) -> None:
     now = dt.datetime.now(dt.UTC)
     await redis.enqueue_job("crawl_batch", "catchup", _job_id=f"catchup:{now:%Y%m%d%H}")
     log.info("startup.catchup_enqueued")
+
+
+async def _close_orphan_runs() -> None:
+    """Закрыть прогоны, оборванные падением или рестартом контейнера.
+
+    Такой прогон навсегда остался бы в статусе running и висел бы в мониторинге как
+    «идёт обработка», хотя выполнять его уже некому: при старте воркер — единственный,
+    кто мог его вести.
+    """
+    async with session_scope() as session:
+        orphans = list(
+            (
+                await session.scalars(
+                    select(PipelineRun).where(PipelineRun.status == "running")
+                )
+            ).all()
+        )
+        for run in orphans:
+            run.status = "interrupted"
+            run.finished_at = dt.datetime.now(dt.UTC)
+            run.error = "Прогон оборван: воркер перезапустился"
+    if orphans:
+        log.info("startup.orphan_runs_closed", count=len(orphans))
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
