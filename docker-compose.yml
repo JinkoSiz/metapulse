@@ -54,6 +54,14 @@ services:
   worker:
     build: .
     command: arq app.pipeline.worker.WorkerSettings
+    # Воркер не слушает HTTP, поэтому healthcheck из образа тут не годится:
+    # arq --check читает свой health-ключ в Redis, который воркер обновляет сам
+    healthcheck:
+      test: ["CMD", "arq", "app.pipeline.worker.WorkerSettings", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://metapulse:${POSTGRES_PASSWORD:-metapulse}@postgres:5432/metapulse

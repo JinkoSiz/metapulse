@@ -24,7 +24,10 @@ class WorkerSettings:
             minute=CRON_MINUTE,
             run_at_startup=False,
             timeout=1800,
-            max_tries=1,
+            # Вторая попытка нужна ровно для одного случая: контейнер перезапустили
+            # посреди обхода. Повтор безопасен — daily_seen и Redis-лок делают задачу
+            # идемпотентной, а сбои отдельных игр внутри обхода и так не роняют прогон.
+            max_tries=2,
             unique=True,
         )
     ]
@@ -37,5 +40,5 @@ class WorkerSettings:
     max_jobs = 1
     job_timeout = 1800
     keep_result = 3600
-    max_tries = 1
+    max_tries = 2
     health_check_interval = 30
