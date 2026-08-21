@@ -101,12 +101,16 @@ async def main(argv: list[str]) -> None:
         for index, slug in enumerate(targets, start=1):
             try:
                 line = await process(client, session, slug)
+                # Коммитим каждую игру отдельно: иначе откат из-за одной проблемной
+                # игры отменил бы весь предыдущий прогресс наполнения
+                await session.commit()
                 print(f"[{index}/{len(targets)}] {line}")
             except Exception as exc:  # noqa: BLE001 — пропускаем проблемную игру
-                print(f"[{index}/{len(targets)}] {slug}: ОШИБКА {type(exc).__name__}: {exc}")
                 await session.rollback()
+                print(f"[{index}/{len(targets)}] {slug}: ОШИБКА {type(exc).__name__}: {exc}")
 
         updated = await recompute_similar(session)
+        await session.commit()
         print(f"\nПохожие игры пересчитаны для {updated} игр")
 
 

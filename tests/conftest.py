@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -17,6 +18,16 @@ import pytest
 import pytest_asyncio
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# Тесты чистят таблицы, поэтому работают в собственной базе. Подменяем URL до первого
+# импорта app.*: иначе движок успеет создаться на рабочей базе и прогон тестов сотрёт
+# собранные игры — в том числе на сервере, если кто-то запустит pytest там.
+_MAIN_DB_URL = os.environ.get(
+    "DATABASE_URL", "postgresql+asyncpg://metapulse:metapulse@localhost:5432/metapulse"
+)
+TEST_DB_NAME = "metapulse_test"
+TEST_DB_URL = _MAIN_DB_URL.rsplit("/", 1)[0] + f"/{TEST_DB_NAME}"
+os.environ["DATABASE_URL"] = TEST_DB_URL
 
 # Таблицы, которые чистятся между тестами БД (в порядке, безопасном для внешних ключей).
 TRUNCATE_TABLES = (
@@ -45,9 +56,7 @@ def fixtures() -> dict[str, dict[str, Any]]:
 
 
 def _postgres_reachable() -> bool:
-    from app.config import settings
-
-    url = urlparse(settings.database_url.replace("postgresql+asyncpg", "postgresql"))
+    url = urlparse(TEST_DB_URL.replace("postgresql+asyncpg", "postgresql"))
     try:
         with socket.create_connection((url.hostname or "localhost", url.port or 5432), timeout=1.5):
             return True
@@ -59,6 +68,49 @@ postgres_required = pytest.mark.skipif(
     not _postgres_reachable(),
     reason="нужен Postgres из docker-compose (docker compose up -d postgres)",
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _prepare_test_database() -> None:
+    """Создаёт тестовую базу и схему в ней. Рабочая база не затрагивается."""
+    if not _postgres_reachable():
+        return
+
+    import asyncio
+
+    import asyncpg
+
+    from app.db.models import Base
+
+    dsn = TEST_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
+    admin_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
+
+    async def prepare() -> None:
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            exists = await admin.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB_NAME
+            )
+            if not exists:
+                await admin.execute(f'CREATE DATABASE "{TEST_DB_NAME}"')
+        finally:
+            await admin.close()
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
+        try:
+            async with engine.begin() as conn:
+                from sqlalchemy import text
+
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                await conn.run_sync(Base.metadata.create_all)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(prepare())
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -81,10 +133,8 @@ async def session() -> AsyncIterator[Any]:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
 
-    from app.config import settings
-
     truncate = text(f"TRUNCATE {', '.join(TRUNCATE_TABLES)} RESTART IDENTITY CASCADE")
-    engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with factory() as db:

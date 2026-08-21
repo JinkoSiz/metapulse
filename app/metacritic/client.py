@@ -50,7 +50,9 @@ CRITIC_PAGE_SIZE = 10
 USER_PAGE_MAX_LIMIT = 200
 
 _AUTH_STATUS = frozenset({401, 403})
-_RETRY_STATUS = frozenset({403, 408, 425, 429, 500, 502, 503, 504})
+# 520-530 — собственные коды Cloudflare («origin unreachable» и родня): наблюдались
+# живьём на отдельных играх и проходят со второй попытки.
+_RETRY_STATUS = frozenset({403, 408, 425, 429, 500, 502, 503, 504, *range(520, 531)})
 _API_KEY_RE = re.compile(r"apiKey=([A-Za-z0-9]+)")
 
 _CAROUSEL_PARAMS: dict[str, Any] = {
