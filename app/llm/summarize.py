@@ -38,7 +38,22 @@ MAX_ITEMS_IN_LIST = 6
 
 
 def _reviews_limit(kind: str) -> int:
-    return settings.mc_critic_reviews_max if kind == "critic" else settings.mc_user_reviews_max
+    """Сколько отзывов уходит в модель.
+
+    Локальная модель на CPU читает промпт порядка 20 токенов в секунду, поэтому для неё
+    корпус режется: сорок отзывов превратили бы каждое резюме в десятиминутное чтение и
+    не уложились бы в часовой цикл. Облачной модели ограничение ни к чему.
+    """
+    limit = settings.mc_critic_reviews_max if kind == "critic" else settings.mc_user_reviews_max
+    if settings.llm_provider == "ollama":
+        return min(limit, settings.ollama_reviews_limit)
+    return limit
+
+
+def _quote_limit() -> int:
+    if settings.llm_provider == "ollama":
+        return min(MAX_QUOTE_CHARS, settings.ollama_review_chars)
+    return MAX_QUOTE_CHARS
 
 
 def _corpus_hash(rows: list[tuple[str, str]]) -> str:
@@ -99,7 +114,8 @@ async def summarize_game(session: AsyncSession, game: Game, kind: str) -> Summar
         log.info("summary_skip_no_reviews", game_id=game.id, kind=kind)
         return existing
 
-    corpus = [(row.source_key, (row.quote or "").strip()[:MAX_QUOTE_CHARS]) for row in rows]
+    quote_chars = _quote_limit()
+    corpus = [(row.source_key, (row.quote or "").strip()[:quote_chars]) for row in rows]
     input_hash = _corpus_hash(corpus)
 
     if existing is not None and existing.input_hash == input_hash:

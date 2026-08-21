@@ -23,6 +23,10 @@ from app.youtube.transcript import fetch_transcript
 log = structlog.get_logger(__name__)
 
 MAX_ERROR_CHARS = 1000
+# Через сколько повторять неудавшийся разбор: достаточно часто, чтобы починка
+# конфигурации подхватилась в тот же день, и достаточно редко, чтобы не долбить
+# YouTube на каждом часовом обходе.
+RETRY_FAILED_AFTER_HOURS = 6
 
 # Запасные промпт и схема на случай, если app/llm/prompts.py не отдаёт LETSPLAY_*.
 FALLBACK_LETSPLAY_SYSTEM = (
@@ -134,7 +138,8 @@ async def process_letsplay(session: AsyncSession, game: Game) -> LetsPlay:
 async def _find_video(game: Game) -> VideoCandidate:
     if not settings.youtube_enabled:
         raise LetsPlayUnavailable("Модуль YouTube отключён настройкой youtube_enabled")
-    if not (settings.youtube_api_key or "").strip():
+    # Ключ нужен только официальному Data API; бэкенд yt-dlp работает без него
+    if settings.youtube_search_backend != "yt-dlp" and not (settings.youtube_api_key or "").strip():
         raise LetsPlayUnavailable("Не задан YOUTUBE_API_KEY — поиск летсплея пропущен")
 
     candidate = await pick_best_letsplay(game.title)
@@ -144,6 +149,21 @@ async def _find_video(game: Game) -> VideoCandidate:
             "короче 8 минут либо опознаны как трейлер/обзор"
         )
     return candidate
+
+
+def _fit_transcript(transcript: str) -> str:
+    """Подгоняет транскрипт под возможности активной модели.
+
+    Четырёхчасовое прохождение даёт сотню тысяч символов. Облачная модель прочитает
+    их за секунды, локальная на CPU — за четверть часа, поэтому ей достаётся начало
+    ролика: там блогер рассказывает о впечатлениях, а дальше идёт игровой процесс.
+    """
+    if settings.llm_provider != "ollama":
+        return transcript
+    limit = settings.ollama_transcript_chars
+    if len(transcript) <= limit:
+        return transcript
+    return transcript[:limit].rsplit(" ", 1)[0]
 
 
 async def _make_conclusion(
@@ -158,7 +178,7 @@ async def _make_conclusion(
         game_title=game.title,
         video_title=candidate.title,
         channel=candidate.channel,
-        transcript=transcript,
+        transcript=_fit_transcript(transcript),
     )
 
     client = _build_llm_client(llm_client_cls, session)
@@ -251,13 +271,22 @@ async def _load(session: AsyncSession, game_id: int) -> LetsPlay | None:
 
 
 def _is_fresh(row: LetsPlay, *, now: dt.datetime | None = None) -> bool:
+    """Кэшируется только удавшийся разбор.
+
+    Неудачу кэшировать на неделю нельзя: причина обычно внешняя и устранимая — не
+    настроен прокси, не было ключа, YouTube отдал ошибку. Иначе после починки
+    конфигурации летсплеи не появились бы ещё несколько дней.
+    """
     if row.fetched_at is None:
         return False
     now = now or dt.datetime.now(dt.UTC)
     fetched = row.fetched_at
     if fetched.tzinfo is None:  # на случай naive-значения из старой записи
         fetched = fetched.replace(tzinfo=dt.UTC)
-    return now - fetched < dt.timedelta(days=settings.letsplay_ttl_days)
+    age = now - fetched
+    if not row.conclusion:
+        return age < dt.timedelta(hours=RETRY_FAILED_AFTER_HOURS)
+    return age < dt.timedelta(days=settings.letsplay_ttl_days)
 
 
 async def _upsert(session: AsyncSession, game_id: int, fields: dict[str, Any]) -> LetsPlay:

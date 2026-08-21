@@ -77,10 +77,23 @@ class _FakeAnthropic:
 
 @pytest.fixture
 def log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Логи пишем во временный каталог, чтобы не мешать рабочим."""
+    """Логи пишем во временный каталог; бэкенд фиксируем облачный."""
     target = tmp_path / "llm"
     monkeypatch.setattr(settings, "llm_log_dir", target)
+    monkeypatch.setattr(settings, "llm_provider", "anthropic")
+    monkeypatch.setattr(settings, "embedding_provider", "voyage")
     monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_enabled", True)
+    return target
+
+
+@pytest.fixture
+def ollama_log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """То же, но для локального бэкенда."""
+    target = tmp_path / "llm-ollama"
+    monkeypatch.setattr(settings, "llm_log_dir", target)
+    monkeypatch.setattr(settings, "llm_provider", "ollama")
+    monkeypatch.setattr(settings, "embedding_provider", "ollama")
     monkeypatch.setattr(settings, "llm_enabled", True)
     return target
 
@@ -157,6 +170,64 @@ async def test_provider_error_is_logged(log_dir: Path, monkeypatch: pytest.Monke
     assert "overloaded_error" in entry["error"]
     assert entry["response"] is None
     assert entry["game_id"] == 7
+
+
+async def test_ollama_call_is_logged(
+    ollama_log_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Локальный бэкенд пишет ту же переписку: провайдер и токены видны в JSONL."""
+    captured: dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "response": json.dumps(ANSWER, ensure_ascii=False),
+                "prompt_eval_count": 2066,
+                "prompt_eval_duration": 92_500_000_000,
+                "eval_count": 160,
+                "eval_duration": 42_600_000_000,
+            }
+
+    class _Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> _Resp:  # noqa: A002
+            captured["url"] = url
+            captured["body"] = json
+            return _Resp()
+
+    monkeypatch.setattr("app.llm.client.httpx.AsyncClient", _Client)
+
+    result = await LlmClient().complete_structured(
+        purpose="user_summary", system="Отвечай по-русски", user="Отзывы игроков…",
+        schema=SCHEMA, game_id=11,
+    )
+
+    assert result == ANSWER
+    assert captured["url"].endswith("/api/generate")
+    # Схема уходит в поле format — именно оно гарантирует форму ответа у Ollama
+    assert captured["body"]["format"] == SCHEMA
+    assert captured["body"]["stream"] is False
+
+    entry = read_lines(ollama_log_dir)[0]
+    assert entry["provider"] == "ollama"
+    assert entry["model"] == settings.ollama_model
+    assert entry["usage"]["input_tokens"] == 2066
+    assert entry["usage"]["output_tokens"] == 160
+    assert entry["usage"]["prompt_eval_ms"] == 92_500
+    assert entry["status"] == "ok"
 
 
 async def test_disabled_llm_raises_and_writes_nothing(

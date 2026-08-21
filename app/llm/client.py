@@ -200,14 +200,46 @@ class LlmClient:
         game_id: int | None = None,
         max_tokens: int | None = None,
     ) -> dict:
-        """Structured outputs (GA, без beta-заголовков). Возвращает распарсенный JSON."""
+        """Структурированный ответ активного бэкенда. Возвращает распарсенный JSON."""
         if purpose not in PURPOSES:
             log.warning("llm_unknown_purpose", purpose=purpose)
-        if not settings.llm_enabled or not settings.anthropic_api_key:
-            # Сети не было — писать в «переписку с нейросетью» нечего.
-            raise LlmDisabled("LLM выключен: нет ANTHROPIC_API_KEY или llm_enabled=false")
+        if not settings.llm_enabled:
+            raise LlmDisabled("LLM выключен настройкой llm_enabled=false")
 
-        model = settings.llm_model
+        if settings.llm_provider == "ollama":
+            return await self._complete_ollama(
+                purpose=purpose,
+                system=system,
+                user=user,
+                schema=schema,
+                game_id=game_id,
+                max_tokens=max_tokens,
+            )
+        return await self._complete_anthropic(
+            purpose=purpose,
+            system=system,
+            user=user,
+            schema=schema,
+            game_id=game_id,
+            max_tokens=max_tokens,
+        )
+
+    async def _complete_anthropic(
+        self,
+        *,
+        purpose: str,
+        system: str,
+        user: str,
+        schema: dict,
+        game_id: int | None,
+        max_tokens: int | None,
+    ) -> dict:
+        """Claude со structured outputs (GA, без beta-заголовков)."""
+        if not settings.anthropic_api_key:
+            # Сети не было — писать в «переписку с нейросетью» нечего.
+            raise LlmDisabled("LLM выключен: нет ANTHROPIC_API_KEY")
+
+        model = settings.anthropic_model
         request: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens or settings.llm_max_tokens,
@@ -291,7 +323,98 @@ class LlmClient:
         )
         return data
 
-    # --- Voyage -------------------------------------------------------------
+    # --- Ollama -------------------------------------------------------------
+
+    async def _complete_ollama(
+        self,
+        *,
+        purpose: str,
+        system: str,
+        user: str,
+        schema: dict,
+        game_id: int | None,
+        max_tokens: int | None,
+    ) -> dict:
+        """Локальная модель. `format` принимает JSON Schema и гарантирует форму ответа.
+
+        Таймаут щедрый: на CPU без GPU чтение промпта идёт порядка 20 токенов в секунду,
+        и одно резюме занимает минуты — это нормальный режим, а не зависание.
+        """
+        model = settings.ollama_model
+        request: dict[str, Any] = {
+            "model": model,
+            "system": system,
+            "prompt": user,
+            "stream": False,
+            "format": schema,
+            "options": {"num_predict": max_tokens or settings.llm_max_tokens},
+        }
+
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=settings.ollama_timeout_s) as client:
+                response = await client.post(
+                    f"{settings.ollama_url.rstrip('/')}/api/generate", json=request
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            await self._emit(
+                provider="ollama",
+                model=model,
+                purpose=purpose,
+                game_id=game_id,
+                request=request,
+                response=None,
+                usage=None,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise LlmError(f"Ollama не ответила: {exc}") from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = {
+            "input_tokens": payload.get("prompt_eval_count"),
+            "output_tokens": payload.get("eval_count"),
+            "prompt_eval_ms": _ns_to_ms(payload.get("prompt_eval_duration")),
+            "eval_ms": _ns_to_ms(payload.get("eval_duration")),
+        }
+        text = payload.get("response") or ""
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError("ожидался JSON-объект")
+        except Exception as exc:
+            await self._emit(
+                provider="ollama",
+                model=model,
+                purpose=purpose,
+                game_id=game_id,
+                request=request,
+                response=payload,
+                usage=usage,
+                latency_ms=latency_ms,
+                status="error",
+                error=f"не удалось разобрать ответ: {exc}",
+            )
+            raise LlmError(f"Не удалось разобрать ответ Ollama: {exc}") from exc
+
+        await self._emit(
+            provider="ollama",
+            model=model,
+            purpose=purpose,
+            game_id=game_id,
+            request=request,
+            response=payload,
+            usage=usage,
+            latency_ms=latency_ms,
+            status="ok",
+            error=None,
+        )
+        return data
+
+    # --- эмбеддинги ---------------------------------------------------------
 
     async def embed(
         self,
@@ -300,13 +423,17 @@ class LlmClient:
         game_id: int | None = None,
         input_type: str = "document",
     ) -> list[list[float]]:
-        """Эмбеддинги Voyage AI. Пустой ключ — `LlmDisabled`, пайплайн это переживает."""
+        """Эмбеддинги активного бэкенда. Недоступность — `LlmDisabled`, пайплайн это переживает."""
         if not texts:
             return []
+        if settings.embedding_provider == "none":
+            raise LlmDisabled("Эмбеддинги выключены: embedding_provider=none")
+        if settings.embedding_provider == "ollama":
+            return await self._embed_ollama(texts, game_id=game_id)
         if not settings.voyage_api_key:
             raise LlmDisabled("Эмбеддинги выключены: нет VOYAGE_API_KEY")
 
-        model = settings.embedding_model
+        model = settings.voyage_model
         request: dict[str, Any] = {
             "input": texts,
             "model": model,
@@ -373,6 +500,66 @@ class LlmClient:
             error=None,
         )
         return vectors
+
+
+    async def _embed_ollama(
+        self, texts: list[str], *, game_id: int | None = None
+    ) -> list[list[float]]:
+        """Локальные эмбеддинги. Чтение текста несопоставимо дешевле генерации,
+        поэтому здесь слабый процессор сервера не помеха."""
+        model = settings.ollama_embedding_model
+        request: dict[str, Any] = {"model": model, "input": texts}
+
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=settings.ollama_timeout_s) as client:
+                response = await client.post(
+                    f"{settings.ollama_url.rstrip('/')}/api/embed", json=request
+                )
+                response.raise_for_status()
+                payload = response.json()
+            vectors = [[float(x) for x in row] for row in payload["embeddings"]]
+        except Exception as exc:
+            await self._emit(
+                provider="ollama",
+                model=model,
+                purpose="embedding",
+                game_id=game_id,
+                request=request,
+                response=None,
+                usage=None,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise LlmError(f"Ollama не отдала эмбеддинги: {exc}") from exc
+
+        await self._emit(
+            provider="ollama",
+            model=model,
+            purpose="embedding",
+            game_id=game_id,
+            request=request,
+            response={
+                "vectors": len(vectors),
+                "dimensions": len(vectors[0]) if vectors else 0,
+                "first_vector_head": vectors[0][:8] if vectors else [],
+                "note": "векторы целиком не логируются (см. комментарий в app/llm/client.py)",
+            },
+            usage={"input_tokens": payload.get("prompt_eval_count")},
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            status="ok",
+            error=None,
+        )
+        return vectors
+
+
+def _ns_to_ms(value: Any) -> int | None:
+    """Ollama отдаёт длительности в наносекундах."""
+    try:
+        return int(value) // 1_000_000
+    except (TypeError, ValueError):
+        return None
 
 
 @retry(

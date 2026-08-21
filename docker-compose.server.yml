@@ -1,0 +1,47 @@
+# Оверлей для развёртывания на собственном сервере.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml up -d --build
+#
+# Отличия от локального запуска:
+#   * HTTPS и домен обслуживает существующий Nginx Proxy Manager, а не свой Caddy;
+#   * резюме считает локальная Ollama из соседнего стека (сеть interviewvault_default);
+#   * запросы к YouTube идут через singbox: домен из России напрямую недоступен;
+#   * наружу ничего не публикуется — NPM ходит к web по имени внутри сети stoat_default.
+
+services:
+  caddy:
+    # HTTPS уже терминирует NPM; свой прокси только занял бы 80/443
+    profiles: ["disabled"]
+
+  # На сервере 5432 и 6380 заняты соседними стеками, а публиковать их незачем:
+  # web и worker ходят к базе и очереди внутри compose-сети по именам сервисов.
+  postgres:
+    ports: !override []
+
+  redis:
+    ports: !override []
+
+  web:
+    ports: !override []
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      YOUTUBE_PROXY: http://singbox:1081
+    networks:
+      default: {}
+      stoat_default:
+        aliases: [metapulse]
+
+  worker:
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      YOUTUBE_PROXY: http://singbox:1081
+    networks:
+      default: {}
+      stoat_default: {}
+      interviewvault_default: {}
+
+networks:
+  stoat_default:
+    external: true
+  interviewvault_default:
+    external: true

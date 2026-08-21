@@ -1,13 +1,16 @@
-"""Поиск самого популярного летсплея через YouTube Data API v3.
+"""Поиск самого популярного летсплея. Два сменных бэкенда.
 
-Квота: `search.list` стоит 100 юнитов из суточных 10000 — то есть не больше 100 поисков
-в сутки, поэтому на игру приходится ровно один `search.list` и один `videos.list` (1 юнит).
+`yt-dlp` (по умолчанию) — без ключа и без квоты, выдача сразу содержит просмотры и
+длительность. `official` — YouTube Data API v3: `search.list` стоит 100 юнитов из
+суточных 10000, то есть не больше 100 поисков в сутки, и не отдаёт ни просмотров, ни
+длительности — их приходится добирать вторым запросом `videos.list`.
 
-`search.list` не отдаёт ни просмотры, ни длительность — оба поля приходится добирать
-вторым запросом `videos.list(part=statistics,contentDetails)` по найденным id.
+Data API работает по REST через httpx, а не через google-api-python-client: последний
+синхронный и тянет в образ пол-Google Cloud ради двух GET-запросов.
 
-Работаем по REST через httpx, а не через google-api-python-client: последний синхронный
-и тянет в образ half of Google Cloud ради двух GET-запросов.
+Из России домен youtube.com напрямую недоступен, поэтому у yt-dlp есть настройка
+прокси (`youtube_proxy`). Любопытно, что `googleapis.com` при этом отвечает напрямую —
+у двух бэкендов разные требования к сети.
 """
 
 from __future__ import annotations
@@ -45,8 +48,34 @@ _EXCLUDE_PATTERNS = (
     r"\bобзор\w*",
     r"\bost\b",
     r"\bsoundtracks?\b",
+    r"before you buy",
+    r"first impressions?",
+    r"is it worth",
+    r"\bvs\b",
+    r"\btier list\b",
+    r"\bstoit li\b",
+    r"стоит ли",
 )
 _EXCLUDE_RE = re.compile("|".join(_EXCLUDE_PATTERNS), re.IGNORECASE)
+
+# Признаки собственно летсплея. Нужны потому, что по просмотрам обзор почти всегда
+# обгоняет прохождение: у «Before You Buy» миллион просмотров против сотни тысяч у
+# двухчасового walkthrough, а пересказывать надо именно игровой процесс.
+_LETSPLAY_PATTERNS = (
+    r"let'?s play",
+    r"\bwalkthrough\b",
+    r"\bplaythrough\b",
+    r"\bgameplay\b",
+    r"\bfull game\b",
+    r"\bpart\s*\d+",
+    r"прохождени\w*",
+    r"летсплей",
+)
+_LETSPLAY_RE = re.compile("|".join(_LETSPLAY_PATTERNS), re.IGNORECASE)
+
+
+def looks_like_letsplay(title: str) -> bool:
+    return bool(_LETSPLAY_RE.search(title or ""))
 
 _ISO_DURATION_RE = re.compile(
     r"^P(?:(?P<weeks>\d+)W)?(?:(?P<days>\d+)D)?"
@@ -110,7 +139,12 @@ def pick_best(
     *,
     min_duration_sec: int = MIN_DURATION_SEC,
 ) -> VideoCandidate | None:
-    """Самый просматриваемый ролик достаточной длины, не похожий на трейлер/обзор."""
+    """Самый просматриваемый летсплей достаточной длины.
+
+    Ролики с признаками прохождения имеют приоритет над всеми остальными, даже если
+    просмотров у них меньше: иначе «самым популярным летсплеем» стабильно оказывается
+    обзор или разбор, где о самой игре говорят пару минут.
+    """
     suitable = [
         c
         for c in candidates
@@ -118,8 +152,10 @@ def pick_best(
     ]
     if not suitable:
         return None
+    letsplays = [c for c in suitable if looks_like_letsplay(c.title)]
+    pool = letsplays or suitable
     # доп. ключи сортировки нужны только чтобы выбор был детерминированным при равных просмотрах
-    return max(suitable, key=lambda c: (c.view_count, c.duration_sec, c.video_id))
+    return max(pool, key=lambda c: (c.view_count, c.duration_sec, c.video_id))
 
 
 def build_candidates(
@@ -207,6 +243,62 @@ def _error_reason(response: httpx.Response) -> str:
     return reason or error.get("message") or ""
 
 
+def _ytdlp_search_options() -> dict[str, object]:
+    options: dict[str, object] = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,  # только метаданные выдачи: просмотры приходят сразу
+        "socket_timeout": 30,
+    }
+    if settings.youtube_proxy:
+        options["proxy"] = settings.youtube_proxy
+    return options
+
+
+def _ytdlp_candidates(entries: Iterable[dict]) -> list[VideoCandidate]:
+    candidates: list[VideoCandidate] = []
+    for entry in entries:
+        video_id = entry.get("id")
+        views = entry.get("view_count")
+        duration = entry.get("duration")
+        # Ролики без просмотров или длительности сравнивать не с чем
+        if not video_id or views is None or duration is None:
+            continue
+        candidates.append(
+            VideoCandidate(
+                video_id=str(video_id),
+                url=video_url(str(video_id)),
+                title=str(entry.get("title") or ""),
+                channel=str(entry.get("channel") or entry.get("uploader") or ""),
+                view_count=int(views),
+                duration_sec=int(duration),
+            )
+        )
+    return candidates
+
+
+async def search_via_ytdlp(title: str) -> list[VideoCandidate]:
+    """Поиск через yt-dlp: без ключа и без суточной квоты в 100 запросов.
+
+    В отличие от Data API, выдача сразу содержит просмотры и длительность,
+    поэтому второй запрос за статистикой не нужен.
+    """
+    import asyncio
+
+    from yt_dlp import YoutubeDL
+
+    query = f"ytsearch{settings.youtube_search_results}:{title} let's play"
+
+    def _run() -> list[VideoCandidate]:
+        with YoutubeDL(_ytdlp_search_options()) as ydl:
+            info = ydl.extract_info(query, download=False)
+        entries = (info or {}).get("entries") or []
+        return _ytdlp_candidates(e for e in entries if isinstance(e, dict))
+
+    return await asyncio.to_thread(_run)
+
+
 async def pick_best_letsplay(
     title: str,
     *,
@@ -214,10 +306,21 @@ async def pick_best_letsplay(
 ) -> VideoCandidate | None:
     """Ищет самый популярный летсплей игры.
 
-    Возвращает None, если ключ YouTube API не задан или ни один ролик из выдачи
-    не прошёл фильтры. При ошибках самого API бросает YouTubeApiError —
-    вызывающий код (app.youtube.service) записывает её в letsplays.error.
+    Бэкенд выбирается настройкой `youtube_search_backend`: `yt-dlp` работает без ключа,
+    `official` — через Data API v3 (нужен ключ, лимит 100 поисков в сутки).
+    Возвращает None, если бэкенд недоступен или ни один ролик не прошёл фильтры.
     """
+    if settings.youtube_search_backend == "yt-dlp":
+        candidates = await search_via_ytdlp(title)
+        best = pick_best(candidates)
+        log.info(
+            "youtube.search.ytdlp",
+            title=title,
+            considered=len(candidates),
+            picked=best.video_id if best else None,
+        )
+        return best
+
     api_key = (settings.youtube_api_key or "").strip()
     if not api_key:
         log.warning("youtube.search.no_api_key", title=title)

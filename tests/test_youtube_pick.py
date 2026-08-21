@@ -52,6 +52,34 @@ def test_empty_input() -> None:
     assert pick_best([]) is None
 
 
+def test_walkthrough_beats_more_popular_non_letsplay() -> None:
+    """Разбор с миллионом просмотров не годится: пересказывать надо прохождение."""
+    best = pick_best(
+        [
+            candidate("d", "Elden Ring — 10 фактов, которые вы не знали", 5_000_000, 20 * 60),
+            candidate("w", "Elden Ring Walkthrough Part 1", 200_000, 120 * 60),
+        ]
+    )
+    assert best is not None and best.video_id == "w"
+
+
+def test_falls_back_to_any_suitable_video() -> None:
+    """Если прохождений в выдаче нет, берём самое популярное из оставшегося."""
+    best = pick_best(
+        [
+            candidate("a", "Elden Ring — интервью с разработчиками", 100_000, 30 * 60),
+            candidate("b", "Elden Ring — история мира", 300_000, 25 * 60),
+        ]
+    )
+    assert best is not None and best.video_id == "b"
+
+
+def test_before_you_buy_is_excluded() -> None:
+    assert is_excluded_title("Elden Ring — Before You Buy")
+    assert is_excluded_title("Elden Ring: стоит ли покупать")
+    assert not is_excluded_title("Elden Ring Gameplay Walkthrough Part 3")
+
+
 def test_review_and_soundtrack_titles_excluded() -> None:
     assert is_excluded_title("Elden Ring Review")
     assert is_excluded_title("Обзор Elden Ring")

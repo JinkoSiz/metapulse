@@ -40,23 +40,48 @@ class Settings(BaseSettings):
     mc_critic_reviews_max: int = 40  # сколько отзывов критиков забирать на игру
     mc_user_reviews_max: int = 60
 
-    # --- LLM ---
-    anthropic_api_key: str | None = None
-    llm_model: str = "claude-haiku-4-5"
-    llm_max_tokens: int = 2000
+    # --- LLM: сменные бэкенды ---
+    # ollama — локальная модель на своём сервере (без ключей и оплаты),
+    # anthropic — облачный Claude (лучше качество резюме на русском).
+    llm_provider: str = "ollama"
     llm_enabled: bool = True
+    llm_max_tokens: int = 2000
 
-    # --- эмбеддинги ---
-    voyage_api_key: str | None = None
-    embedding_model: str = "voyage-4-lite"
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-haiku-4-5"
+
+    ollama_url: str = "http://ollama:11434"
+    ollama_model: str = "qwen2.5:7b"
+    # Локальная 7B на CPU читает промпт ~20 ток/с: 40 отзывов превратили бы обход
+    # в многочасовой. Для локального бэкенда корпус режется до вменяемого объёма.
+    ollama_reviews_limit: int = 25
+    ollama_review_chars: int = 500
+    # Транскрипт четырёхчасового прохождения — под сотню тысяч символов; локальной
+    # модели достаётся начало, где блогер делится впечатлениями.
+    ollama_transcript_chars: int = 9000
+    ollama_timeout_s: float = 900.0
+
+    # --- эмбеддинги: сменные бэкенды ---
+    # ollama — bge-m3 на своём сервере (1024 измерения, как колонка в БД),
+    # voyage — облачный voyage-4-lite, none — лексический фолбэк по жанрам и названиям.
+    embedding_provider: str = "ollama"
     embedding_dim: int = 1024
     similar_games_count: int = 8
 
+    ollama_embedding_model: str = "bge-m3"
+    voyage_api_key: str | None = None
+    voyage_model: str = "voyage-4-lite"
+
     # --- YouTube (доп. часть 1) ---
-    youtube_api_key: str | None = None
     youtube_enabled: bool = True
-    youtube_proxy: str | None = None  # резидентный прокси для транскриптов
+    # yt-dlp ищет без ключа и без суточной квоты; official требует YOUTUBE_API_KEY
+    youtube_search_backend: str = "yt-dlp"
+    youtube_api_key: str | None = None
+    # HTTP-прокси для запросов к YouTube: из РФ домен недоступен напрямую.
+    # На своём сервере это singbox: http://singbox:1081
+    youtube_proxy: str | None = None
     youtube_transcript_max_chars: int = 60_000
+    youtube_search_results: int = 12
     letsplay_ttl_days: int = 7
 
     # --- логи переписки с нейросетью ---
@@ -65,6 +90,19 @@ class Settings(BaseSettings):
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.app_tz)
+
+    @property
+    def llm_model(self) -> str:
+        """Модель активного бэкенда — попадает в JSONL-логи и в карточку игры."""
+        return self.ollama_model if self.llm_provider == "ollama" else self.anthropic_model
+
+    @property
+    def embedding_model(self) -> str:
+        return (
+            self.ollama_embedding_model
+            if self.embedding_provider == "ollama"
+            else self.voyage_model
+        )
 
     @property
     def sync_database_url(self) -> str:
