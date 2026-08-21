@@ -91,6 +91,50 @@ async def ensure_embedding(session: AsyncSession, game: Game) -> bool:
     return True
 
 
+async def embed_games(session: AsyncSession | None, games: list[Game]) -> int:
+    """Считает эмбеддинги пачкой и возвращает число обновлённых.
+
+    Пачкой, а не по игре, ради локального бэкенда: Ollama держит в памяти одну модель
+    за раз, и чередование «резюме — эмбеддинг — резюме» заставляет её выгружать и
+    поднимать пять гигабайт на каждый шаг. Один вызов на весь батч оставляет ровно
+    одно переключение.
+    """
+    pending: list[tuple[Game, str, str]] = []
+    for game in games:
+        payload = build_embedding_text(game)
+        if not payload.strip():
+            continue
+        digest = embedding_hash(payload)
+        if game.embedding_hash == digest and game.embedding is not None:
+            continue
+        pending.append((game, payload, digest))
+
+    if not pending:
+        return 0
+
+    client = LlmClient(session)
+    try:
+        vectors = await client.embed([payload for _, payload, _ in pending])
+    finally:
+        await client.aclose()
+
+    updated = 0
+    for (game, _, digest), vector in zip(pending, vectors, strict=False):
+        if len(vector) != settings.embedding_dim:
+            raise LlmError(
+                f"Размерность эмбеддинга {len(vector)} не совпадает с колонкой "
+                f"{settings.embedding_dim} (модель {settings.embedding_model})"
+            )
+        game.embedding = vector
+        game.embedding_hash = digest
+        updated += 1
+
+    if session is not None:
+        await session.flush()
+    log.info("embeddings.batch", games=updated)
+    return updated
+
+
 async def recompute_similar(session: AsyncSession, game_ids: list[int] | None = None) -> int:
     """Пересчитывает similar_games. Возвращает число игр, для которых нашлись похожие."""
     limit = settings.similar_games_count
@@ -192,6 +236,7 @@ async def _similar_by_lexical(
 __all__ = [
     "LlmDisabled",
     "build_embedding_text",
+    "embed_games",
     "ensure_embedding",
     "genre_names",
     "recompute_similar",

@@ -22,7 +22,7 @@ from app.config import settings
 from app.db.models import Game, LlmCall, PipelineRun
 from app.db.session import SessionLocal, session_scope
 from app.llm.client import LlmDisabled
-from app.llm.embeddings import ensure_embedding, recompute_similar
+from app.llm.embeddings import embed_games, recompute_similar
 from app.llm.summarize import summarize_game
 from app.metacritic.client import MetacriticClient
 from app.pipeline.events import EventBus, default_worker_name
@@ -182,6 +182,7 @@ async def _run_batch(bus: EventBus, trigger: str, worker: str) -> dict[str, Any]
                         await session.commit()
                         log.warning("crawl.game_failed", slug=item.slug, error=str(exc))
 
+            await _embed_batch(session, bus, run_id, processed_ids, stats)
             await _recompute_similar(session, bus, run_id, stats)
             await _run_letsplays(session, bus, run_id, processed_ids, stats, worker, trigger)
 
@@ -299,14 +300,7 @@ async def _process_game(
             if await _safe_summary(session, game, kind, stats):
                 stats["summaries_written"] += 1
 
-    try:
-        await ensure_embedding(session, game)
-    except LlmDisabled:
-        pass
-    except Exception as exc:
-        stats["errors"] += 1
-        log.warning("crawl.embedding_failed", slug=game.slug, error=str(exc))
-
+    # Эмбеддинг считается не здесь, а одной пачкой после цикла: см. _embed_batch
     await mark_seen(session, day, item.mc_id, game_id=game.id, run_id=run_id)
     await bump_processed(session, day, 1)
     await bus.publish(
@@ -341,6 +335,30 @@ async def _safe_summary(
         return False
     await session.commit()
     return summary is not None
+
+
+async def _embed_batch(
+    session: AsyncSession, bus: EventBus, run_id: int, game_ids: list[int], stats: dict[str, int]
+) -> None:
+    """Эмбеддинги всего батча одним вызовом — иначе локальная модель тратит время
+    на выгрузку и загрузку весов между каждым резюме и каждым эмбеддингом."""
+    if not game_ids:
+        return
+    try:
+        games = list((await session.scalars(select(Game).where(Game.id.in_(game_ids)))).all())
+        count = await embed_games(session, games)
+        await session.commit()
+        if count:
+            await bus.publish(
+                session, run_id, stage="embedding", message=f"Эмбеддинги посчитаны: {count}"
+            )
+            await session.commit()
+    except LlmDisabled:
+        pass
+    except Exception as exc:
+        await session.rollback()
+        stats["errors"] += 1
+        log.warning("crawl.embeddings_failed", error=str(exc))
 
 
 async def _recompute_similar(
